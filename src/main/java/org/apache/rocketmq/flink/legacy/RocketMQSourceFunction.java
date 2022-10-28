@@ -388,7 +388,8 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
                                         }
                                         return true;
                                     },
-                                    "RuntimeException"));
+                                    "RuntimeException",
+                                    runningChecker));
         }
 
         awaitTermination();
