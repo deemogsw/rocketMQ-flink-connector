@@ -5,6 +5,25 @@
 [![Percentage of issues still open](http://isitmaintained.com/badge/open/apache/rocketmq-flink.svg)](http://isitmaintained.com/project/apache/rocketmq-flink "Percentage of issues still open")
 [![Twitter Follow](https://img.shields.io/twitter/follow/ApacheRocketMQ?style=social)](https://twitter.com/intent/follow?screen_name=ApacheRocketMQ)
 
+生产可用稳定版本，支持RocketMQSource和RocketMQSourceFunction两种接入方式。如果发现bug可提交issue描述问题或vx:gsw-520，火速解决(发生线上事故一年白干)。
+
+完善RocketMQSource实现方式
+
+[Support rich initialization modes of RocketMQSource](https://github.com/apache/rocketmq-flink/issues/63)
+
+已修复重大bug列表如下
+
+[[BUG] Offset will be losted when the job has restarted from checkpoint](https://github.com/apache/rocketmq-flink/issues/76)
+
+[[BUG]Consumer will be blocked after the server throws multiple exceptions](https://github.com/apache/rocketmq-flink/issues/67)
+
+[Add startMode to specify offset when consumer start.Similar to kafka connector](https://github.com/apache/rocketmq-flink/issues/59)
+
+示例代码参见如下目录
+
+<img width="441" alt="image" src="https://user-images.githubusercontent.com/48081481/209750926-e02a7160-547f-4434-b7d6-71da27a8ec8e.png">
+
+
 RocketMQ integration for [Apache Flink](https://flink.apache.org/). This module includes the RocketMQ source and sink that allows a flink job to either write messages into a topic or read from topics in a flink job.
 
 ## RocketMQSourceFunction
