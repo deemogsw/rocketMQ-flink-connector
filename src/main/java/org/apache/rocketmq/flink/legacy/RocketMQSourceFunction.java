@@ -170,9 +170,6 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
             restoredOffsets = new ConcurrentHashMap<>();
         }
 
-        // use restoredOffsets to init offset table.
-        initOffsetTableFromRestoredOffsets();
-
         if (pendingOffsetsToCommit == null) {
             pendingOffsetsToCommit = new LinkedMap();
         }
@@ -243,7 +240,9 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
                 RocketMQUtils.allocate(totalQueues, taskNumber, ctx.getIndexOfThisSubtask());
         // If the job recovers from the state, the state has already contained the offsets of last
         // commit.
-        if (!restored) {
+        if (restored) {
+            initOffsetTableFromRestoredOffsets(messageQueues);
+        } else {
             this.offsetTable =
                     RocketMQUtils.initOffsets(
                             messageQueues,
@@ -252,8 +251,6 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
                             offsetResetStrategy,
                             specificTimeStamp,
                             specificStartupOffsets);
-        } else {
-            this.offsetTable = new ConcurrentHashMap<>();
         }
     }
 
@@ -501,11 +498,11 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
         }
     }
 
-    public void initOffsetTableFromRestoredOffsets() {
+    public void initOffsetTableFromRestoredOffsets(List<MessageQueue> messageQueues) {
         Preconditions.checkNotNull(restoredOffsets, "restoredOffsets can't be null");
         restoredOffsets.forEach(
                 (mq, offset) -> {
-                    if (!offsetTable.containsKey(mq) || offsetTable.get(mq) < offset) {
+                    if (messageQueues.contains(mq)) {
                         offsetTable.put(mq, offset);
                     }
                 });
