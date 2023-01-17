@@ -13,6 +13,8 @@
 
 已修复重大bug列表如下
 
+[[BUG] topic route changed,job can't recover normally](https://github.com/apache/rocketmq-flink/issues/83)
+
 [[BUG] Offset will be losted when the job has restarted from checkpoint](https://github.com/apache/rocketmq-flink/issues/76)
 
 [[BUG]Consumer will be blocked after the server throws multiple exceptions](https://github.com/apache/rocketmq-flink/issues/67)
