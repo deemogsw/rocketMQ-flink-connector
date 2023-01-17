@@ -52,7 +52,6 @@ import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunctio
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.util.Preconditions;
 
-import org.apache.flink.shaded.curator5.com.google.common.collect.Lists;
 import org.apache.flink.shaded.curator5.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import org.apache.commons.collections.map.LinkedMap;
@@ -75,7 +74,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import static org.apache.rocketmq.flink.legacy.RocketMQConfig.CONSUMER_BATCH_SIZE;
 import static org.apache.rocketmq.flink.legacy.RocketMQConfig.DEFAULT_CONSUMER_BATCH_SIZE;
@@ -97,7 +98,7 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
     private transient DefaultMQPullConsumer consumer;
     private KeyValueDeserializationSchema<OUT> schema;
     private transient ListState<Tuple2<MessageQueue, Long>> unionOffsetStates;
-    private Map<MessageQueue, Long> offsetTable;
+    private Map<MessageQueue, Long> offsetTable = new ConcurrentHashMap<>();
     private Map<MessageQueue, Long> restoredOffsets;
     private List<MessageQueue> messageQueues;
     private ExecutorService executor;
@@ -187,7 +188,7 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
         }
 
         runningChecker = new RunningChecker();
-        runningChecker.setRunning(true);
+        runningChecker.setState(RunningChecker.State.RUNNING);
 
         final ThreadFactory threadFactory =
                 new ThreadFactoryBuilder()
@@ -390,6 +391,12 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
         }
 
         awaitTermination();
+        // The exception in thread pools should be thrown in main thread.Then the job would switch
+        // from state RUNNING to FAILED.
+        if (runningChecker.isFailed()) {
+            throw new RuntimeException(
+                    "RunningChecker is failed, Please check the log in consumer thread");
+        }
     }
 
     private void awaitTermination() throws InterruptedException {
@@ -456,7 +463,7 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
     @Override
     public void cancel() {
         log.debug("cancel ...");
-        runningChecker.setRunning(false);
+        runningChecker.setState(RunningChecker.State.FINISHED);
 
         if (timer != null) {
             timer.shutdown();
@@ -498,7 +505,8 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
         }
     }
 
-    public void initOffsetTableFromRestoredOffsets(List<MessageQueue> messageQueues) {
+    public void initOffsetTableFromRestoredOffsets(List<MessageQueue> messageQueues)
+            throws MQClientException {
         Preconditions.checkNotNull(restoredOffsets, "restoredOffsets can't be null");
         restoredOffsets.forEach(
                 (mq, offset) -> {
@@ -506,6 +514,22 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
                         offsetTable.put(mq, offset);
                     }
                 });
+        // Discovery topic Route change when recover.When a new messageQueue joins.A Legal offset or
+        // the earliest offset will be used.
+        if (!offsetTable.keySet().containsAll(messageQueues)) {
+            List<MessageQueue> newMessageQueues =
+                    messageQueues.stream()
+                            .filter(mq -> !offsetTable.containsKey(mq))
+                            .collect(Collectors.toList());
+            for (MessageQueue mq : newMessageQueues) {
+                long offset = consumer.fetchConsumeOffset(mq, false);
+                if (offset < 0) {
+                    offset = consumer.minOffset(mq);
+                }
+                log.info("new messageQueue be found in recovery phase.{},Offset:{}", mq, offset);
+                offsetTable.put(mq, offset);
+            }
+        }
         log.info("init offset table [{}] from restoredOffsets successful.", offsetTable);
     }
 
@@ -518,40 +542,34 @@ public class RocketMQSourceFunction<OUT> extends RichParallelSourceFunction<OUT>
             return;
         }
 
-        Map<MessageQueue, Long> currentOffsets;
-        try {
-            // Discovers topic route change when snapshot
-            RetryUtil.call(
-                    () -> {
-                        Collection<MessageQueue> totalQueues =
-                                consumer.fetchSubscribeMessageQueues(topic);
-                        int taskNumber = getRuntimeContext().getNumberOfParallelSubtasks();
-                        int taskIndex = getRuntimeContext().getIndexOfThisSubtask();
-                        List<MessageQueue> newQueues =
-                                RocketMQUtils.allocate(totalQueues, taskNumber, taskIndex);
-                        Collections.sort(newQueues);
-                        log.debug(taskIndex + " Topic route is same.");
-                        if (!messageQueues.equals(newQueues)) {
-                            throw new RuntimeException();
-                        }
-                        return true;
-                    },
-                    "RuntimeException due to topic route changed");
+        // Discovers topic route change when snapshot
+        AtomicBoolean isChanged = new AtomicBoolean(false);
+        RetryUtil.call(
+                () -> {
+                    Collection<MessageQueue> totalQueues =
+                            consumer.fetchSubscribeMessageQueues(topic);
+                    int taskNumber = getRuntimeContext().getNumberOfParallelSubtasks();
+                    int taskIndex = getRuntimeContext().getIndexOfThisSubtask();
+                    List<MessageQueue> newQueues =
+                            RocketMQUtils.allocate(totalQueues, taskNumber, taskIndex);
+                    Collections.sort(newQueues);
+                    if (!messageQueues.equals(newQueues)) {
+                        isChanged.set(true);
+                        return false;
+                    }
+                    log.debug(taskIndex + " Topic route is same.");
+                    return true;
+                },
+                "RuntimeException due to topic route changed");
 
-            unionOffsetStates.clear();
-            currentOffsets = new HashMap<>(offsetTable.size());
-        } catch (RuntimeException e) {
-            log.warn("Retry failed multiple times for topic route change, keep previous offset.");
-            // If the retry fails for multiple times, the message queue and its offset in the
-            // previous checkpoint will be retained.
-            List<Tuple2<MessageQueue, Long>> unionOffsets =
-                    Lists.newArrayList(unionOffsetStates.get().iterator());
-            Map<MessageQueue, Long> queueOffsets = new HashMap<>(unionOffsets.size());
-            unionOffsets.forEach(queueOffset -> queueOffsets.put(queueOffset.f0, queueOffset.f1));
-            currentOffsets = new HashMap<>(unionOffsets.size() + offsetTable.size());
-            currentOffsets.putAll(queueOffsets);
+        // If topic route changed, the exception will switch the job's state from RUNNING to
+        // FAILED.So that job could recover automatically
+        if (isChanged.get()) {
+            throw new RuntimeException("RuntimeException due to topic route changed.");
         }
 
+        unionOffsetStates.clear();
+        Map<MessageQueue, Long> currentOffsets = new HashMap<>(offsetTable.size());
         for (Map.Entry<MessageQueue, Long> entry : offsetTable.entrySet()) {
             unionOffsetStates.add(Tuple2.of(entry.getKey(), entry.getValue()));
             currentOffsets.put(entry.getKey(), entry.getValue());

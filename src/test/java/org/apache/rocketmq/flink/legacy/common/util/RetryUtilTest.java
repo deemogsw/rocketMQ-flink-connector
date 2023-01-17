@@ -35,7 +35,7 @@ public class RetryUtilTest extends TestCase {
         try {
             User user = new User();
             RunningChecker runningChecker = new RunningChecker();
-            runningChecker.setRunning(true);
+            runningChecker.setState(RunningChecker.State.RUNNING);
             ExecutorService executorService = Executors.newCachedThreadPool();
             executorService.execute(
                     () ->

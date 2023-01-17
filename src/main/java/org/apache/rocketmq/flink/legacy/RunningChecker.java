@@ -19,13 +19,23 @@ package org.apache.rocketmq.flink.legacy;
 import java.io.Serializable;
 
 public class RunningChecker implements Serializable {
-    private volatile boolean isRunning = false;
+    private volatile State state = State.RUNNING;
 
     public boolean isRunning() {
-        return isRunning;
+        return state.equals(State.RUNNING);
     }
 
-    public void setRunning(boolean running) {
-        isRunning = running;
+    public boolean isFailed() {
+        return state.equals(State.FAILED);
+    }
+
+    public void setState(State state) {
+        this.state = state;
+    }
+
+    public enum State {
+        RUNNING,
+        FAILED,
+        FINISHED
     }
 }

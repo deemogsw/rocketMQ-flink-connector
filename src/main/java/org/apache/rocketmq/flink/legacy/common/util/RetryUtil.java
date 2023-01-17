@@ -54,7 +54,7 @@ public class RetryUtil {
             } catch (Exception ex) {
                 if (retries >= MAX_ATTEMPTS) {
                     if (null != runningChecker) {
-                        runningChecker.setRunning(false);
+                        runningChecker.setState(RunningChecker.State.FAILED);
                     }
                     throw new RuntimeException(ex);
                 }
