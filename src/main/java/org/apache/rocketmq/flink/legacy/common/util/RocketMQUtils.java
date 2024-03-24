@@ -109,6 +109,12 @@ public final class RocketMQUtils {
                     break;
                 case GROUP_OFFSETS:
                     offset = consumer.fetchConsumeOffset(mq, false);
+                    // If broker throw exception,return -2.should be distinguished from the
+                    // initialization scenario
+                    if (offset <= -2) {
+                        throw new RuntimeException(
+                                "An error occurred while fetching offset,please check up server's log");
+                    }
                     // the min offset return if consumer group first join,return a negative number
                     // if catch exception when fetch from broker.
                     // If you want consumer from earliest,please use OffsetResetStrategy.EARLIEST
